@@ -10,8 +10,8 @@ Dependencies:
   * BYTUTILS.ahk - Simple byte handling "macros". In this same repository.
 */
 
-#include AHKHID.ahk
-#include BYTEUTILS.ahk
+#include lib/AHKHID.ahk
+#include lib/BYTEUTILS.ahk
 
 /*
     Listens for HID messages from the registered device. When the value of a byte in
