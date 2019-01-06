@@ -7,11 +7,11 @@ Use HIDMESSAGE.ahk if you don't need the extra debug information.
 
 Dependencies:
   * AHKHID.ahk   - TheGood's AHK implementation of the HID functions. https://github.com/jleb/AHKHID
-  * BYTUTILS.ahk - Simple byte handling "macros". In this same repository.
+  * BYTUTILS.ahk - Simple byte handling "macros". https://github.com/CharlesWillis3/ahk-utils
 */
 
-#include lib/AHKHID.ahk
-#include lib/BYTEUTILS.ahk
+#include lib\AHKHID\AHKHID.ahk
+#include lib\ahk-utils\BYTEUTILS.ahk
 
 /*
     Listens for HID messages from the registered device. When the value of a byte in
