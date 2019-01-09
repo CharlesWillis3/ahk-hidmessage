@@ -22,26 +22,28 @@ class CHidMessageByteDispatcher
     /*
         hGui: a gui handle to receive the messages
         
-        HID device registration:
-        nUsagePage: usage page
-        nUsage    : usage
-        nVID      : vendor ID
-        nPID      : product ID
-        nVer      : version
+        pDeviceDescription: an object describing the HID device to register
+        It must contain the following keys:
+          * USAGE_PAGE: usage page
+          * USAGE : usage
+          * VENDOR_ID : vendor ID
+          * PRODUCT_ID : product ID
+          * VERSION : version
 
         pByteHandler: an object instance to handle byte changes. The object should have a method for each
         byte you want to to watch for changes. The method name must be the numeric (zero-based) index of the byte.
-        When a change is detected in a given byte, the method will be called with three paramters:
+        When a change is detected in a given byte, the method will be called with four paramters:
          * The current value of the byte
          * The previous value of the byte
          * The result of fnGetShiftState (if it's provided in the constructor)
+         * an array of the message bytes
         Example:
             class ByteHandler {
-                0x0(curr, last, shiftState) {
+                0x0(curr, last, shiftState, messageBytes) {
                     ; do something with the value
                 }
 
-                0x4(curr, last, shiftState) {
+                0x4(curr, last, shiftState, messageBytes) {
                     ; do something with the value
                 }
             }
@@ -54,23 +56,36 @@ class CHidMessageByteDispatcher
 
             GetShiftState(ByRef pMsgData)
     */
-    __New(hGui, nUsagePage, nUsage, nVID, nPID, nVer, pByteHandler, rgbInitState, fnGetShiftState := "")
+    __New(hGui, pDeviceDescription, pByteHandler, rgbInitState, fnGetShiftState := "")
     {
         global RIDEV_INPUTSINK
 
         OutputDebug, %A_ThisFunc%
 
+        if (!IsObject(pDeviceDescription))
+            throw "'pDeviceDescription' must be an object reference"
         if (!IsObject(pByteHandler))
-            throw "pByteHandler must be an object reference"
+            throw "'pByteHandler' must be an object reference"
+        if (fnGetShiftState and !IsFunc(fnGetShiftState))
+            throw "'fnGetShiftState' must be a function reference"
 
         this.rgbPrevVals := rgbInitState.Clone()
+
+        this.hGui := hGui
+        this.nUsagePage := pDeviceDescription.USAGE_PAGE
+        this.nUsage := pDeviceDescription.USAGE
+        this.nVID := pDeviceDescription.VENDOR_ID
+        this.nPID := pDeviceDescription.PRODUCT_ID
+        this.nVer := pDeviceDescription.VERSION
+        this.pByteHandler := pByteHandler
+        this.fnGetShiftState := fnGetShiftState
 
         ;Intercept WM_INPUT messages
         WM_INPUT := 0xFF
         OnMessage(WM_INPUT, this.InputMsg.Bind(this))
 
         ;Register with RIDEV_INPUTSINK (so that data is received even in the background)
-        nResult := AHKHID_Register(nUsagePage, nUsage, hGui, RIDEV_INPUTSINK)
+        nResult := AHKHID_Register(this.nUsagePage, this.nUsage, this.hGui, RIDEV_INPUTSINK)
 
         ;Check for error
         if (nResult == -1) {
@@ -84,15 +99,6 @@ class CHidMessageByteDispatcher
 
             return
         }
-
-        this.hGui := hGui
-        this.nUsagePage := nUsagePage
-        this.nUsage := nUsage
-        this.nVID := nVID
-        this.nPID := nPID
-        this.nVer := nVer
-        this.pByteHandler := pByteHandler
-        this.fnGetShiftState := fnGetShiftState
     }
 
     __Delete()
@@ -163,9 +169,15 @@ class CHidMessageByteDispatcher
         if IsFunc(this.fnGetShiftState)
             unkShiftState := this.fnGetShiftState.Call(pData)
 
+        ;Get the message bytes
+        rgbCurrentValues := []
+        loop, %cHidBytes%
+            rgbCurrentValues[A_Index] := NumGet(pData, A_Index - 1, "UChar")
+
+        ;Detect changes from the last message and call the handlers
         loop, %cHidBytes% {
             idxMsgByte := A_Index - 1
-            bCurrVal := NumGet(pData, idxMsgByte, "UChar")
+            bCurrVal := rgbCurrentValues[A_Index]
             bPrevVal := this.rgbPrevVals[A_Index]
             this.rgbPrevVals[A_Index] := bCurrVal
 
@@ -177,13 +189,33 @@ class CHidMessageByteDispatcher
                     OutputDebug % Format("{1:02d} Curr:{2:02X} Prev:{3:02X} ShiftState:{4} Func:0x{5:01X} FuncExists:{6}", idxMsgByte, bCurrVal, bPrevVal, unkShiftState, idxMsgByte, IsFunc((this.pByteHandler)[idxMsgByte]) ? "True" : "False")
                 }
 
-                (this.pByteHandler)[idxMsgByte](bCurrVal, bPrevVal, unkShiftState)
+                ;Attempt to resolve the correct byte change handler and cache it for later use
+                if (!this.mpnfnResolvedHandlers.HasKey(idxMsgByte)) {
+                    if (DEBUG > 1)
+                        OutputDebug % "Handler not resolved: " idxMsgByte
+
+                    if (IsFunc((this.pByteHAndler)[idxMsgByte])) {
+                        this.mpnfnResolvedHandlers[idxMsgByte] := ObjBindMethod(this.pByteHandler, idxMsgByte)
+
+                        if (DEBUG > 1)
+                            OutputDebug % "Resolved byte handler: " idxMsgByte
+                    }
+                    else
+                        this.mpnfnResolvedHandlers[idxMsgByte] := 0
+                }
+
+                if (this.mpnfnResolvedHandlers[idxMsgByte]) {
+                    if (!rgbCurrentValuesClone)
+                        rgbCurrentValuesClone := rgbCurrentValues.Clone()
+
+                    this.mpnfnResolvedHandlers[idxMsgByte].Call(bCurrVal, bPrevVal, unkShiftState, rgbCurrentValuesClone)
+                }
             }
         }
 
         if (DEBUG > 2) {
             OutputDebug, %s%
             OutputDebug, ---------------------
-        }      
+        }
     }
 }
